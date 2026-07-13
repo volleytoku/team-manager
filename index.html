@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Team Manager</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📋</text></svg>">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ==================== 設定未完了画面 ==================== -->
+<div id="setup-screen" class="fullscreen-center hidden">
+  <div class="setup-card">
+    <h1>⚙️ 初期設定が必要です</h1>
+    <p>このアプリを使うには Firebase プロジェクトの設定が必要です。</p>
+    <ol>
+      <li><a href="https://console.firebase.google.com/" target="_blank">Firebase Console</a> でプロジェクトを作成</li>
+      <li>「Authentication」→「メール / パスワード」を有効化</li>
+      <li>「Firestore Database」を作成（本番モード）</li>
+      <li>プロジェクト設定からウェブアプリの構成（firebaseConfig）を取得</li>
+      <li>リポジトリの <code>firebase-config.js</code> に貼り付けて再デプロイ</li>
+    </ol>
+    <p>詳しくはリポジトリの README.md を参照してください。</p>
+  </div>
+</div>
+
+<!-- ==================== ログイン画面 ==================== -->
+<div id="auth-screen" class="fullscreen-center hidden">
+  <div class="auth-card">
+    <div class="auth-logo">📋</div>
+    <h1>Team Manager</h1>
+    <p class="auth-sub">部署の情報共有・タスク・カレンダー管理</p>
+
+    <div class="auth-tabs">
+      <button id="tab-login" class="auth-tab active">ログイン</button>
+      <button id="tab-register" class="auth-tab">新規登録</button>
+    </div>
+
+    <form id="login-form" class="auth-form">
+      <label>ID</label>
+      <input type="text" id="login-id" autocomplete="username" required placeholder="半角英数字">
+      <label>パスワード</label>
+      <input type="password" id="login-pw" autocomplete="current-password" required placeholder="6文字以上">
+      <button type="submit" class="btn btn-primary btn-block">ログイン</button>
+    </form>
+
+    <form id="register-form" class="auth-form hidden">
+      <label>名前</label>
+      <input type="text" id="reg-name" required placeholder="例）山田 太郎">
+      <label>ポジション（役職・担当）</label>
+      <input type="text" id="reg-position" required placeholder="例）マネージャー / アナリスト">
+      <label>ID（半角英数字）</label>
+      <input type="text" id="reg-id" autocomplete="username" required placeholder="例）yamada" pattern="[a-zA-Z0-9_.\-]+">
+      <label>パスワード（6文字以上）</label>
+      <input type="password" id="reg-pw" autocomplete="new-password" required minlength="6">
+      <button type="submit" class="btn btn-primary btn-block">登録してはじめる</button>
+    </form>
+
+    <p id="auth-error" class="auth-error hidden"></p>
+  </div>
+</div>
+
+<!-- ==================== メイン画面 ==================== -->
+<div id="app-screen" class="app-layout hidden">
+
+  <!-- サイドバー -->
+  <aside class="sidebar">
+    <div class="sidebar-header">
+      <span class="sidebar-logo">📋</span>
+      <span class="sidebar-title">Team Manager</span>
+    </div>
+
+    <div class="sidebar-user">
+      <div class="avatar" id="user-avatar">?</div>
+      <div class="sidebar-user-info">
+        <div class="sidebar-user-name" id="user-name">-</div>
+        <div class="sidebar-user-pos" id="user-position">-</div>
+      </div>
+    </div>
+
+    <nav class="sidebar-nav">
+      <button class="nav-item active" data-view="board">💬 <span>掲示板</span></button>
+      <button class="nav-item" data-view="tasks">✅ <span>タスク</span></button>
+      <button class="nav-item" data-view="members">👥 <span>メンバー</span></button>
+      <button class="nav-item" data-view="calendar">📅 <span>カレンダー</span></button>
+    </nav>
+
+    <div class="sidebar-footer">
+      <button id="logout-btn" class="nav-item">🚪 <span>ログアウト</span></button>
+    </div>
+  </aside>
+
+  <!-- メインコンテンツ -->
+  <main class="main">
+
+    <!-- ---------- 掲示板 ---------- -->
+    <section id="view-board" class="view">
+      <div class="view-header">
+        <h2>💬 掲示板</h2>
+        <button class="btn btn-primary" id="new-post-btn">＋ 新規投稿</button>
+      </div>
+      <div id="post-list" class="post-list"></div>
+    </section>
+
+    <!-- ---------- タスク ---------- -->
+    <section id="view-tasks" class="view hidden">
+      <div class="view-header">
+        <h2>✅ タスク</h2>
+        <button class="btn btn-primary" id="new-task-btn">＋ 新規タスク</button>
+      </div>
+      <div class="tabs">
+        <button class="tab active" data-tasktab="mine">マイタスク</button>
+        <button class="tab" data-tasktab="all">チーム全体</button>
+      </div>
+      <div class="task-filters" id="task-filters">
+        <button class="chip active" data-status="all">すべて</button>
+        <button class="chip" data-status="todo">未着手</button>
+        <button class="chip" data-status="doing">進行中</button>
+        <button class="chip" data-status="done">完了</button>
+      </div>
+      <div id="task-list"></div>
+    </section>
+
+    <!-- ---------- メンバー ---------- -->
+    <section id="view-members" class="view hidden">
+      <div class="view-header">
+        <h2>👥 メンバー・進捗</h2>
+      </div>
+      <div id="member-list"></div>
+    </section>
+
+    <!-- ---------- カレンダー ---------- -->
+    <section id="view-calendar" class="view hidden">
+      <div class="view-header">
+        <h2>📅 カレンダー</h2>
+        <button class="btn btn-primary" id="new-event-btn">＋ 予定を追加</button>
+      </div>
+      <div class="cal-controls">
+        <button class="btn btn-ghost" id="cal-prev">‹</button>
+        <div class="cal-title" id="cal-title"></div>
+        <button class="btn btn-ghost" id="cal-next">›</button>
+        <button class="btn btn-ghost" id="cal-today">今日</button>
+      </div>
+      <div class="cal-legend">
+        <span><i class="dot dot-task"></i>タスク期限</span>
+        <span><i class="dot dot-done"></i>完了タスク</span>
+        <span><i class="dot dot-event"></i>予定</span>
+        <span>🔒 プライベート</span>
+      </div>
+      <div class="cal-grid" id="cal-grid"></div>
+    </section>
+
+  </main>
+</div>
+
+<!-- ==================== モーダル ==================== -->
+<div id="modal-overlay" class="modal-overlay hidden">
+  <div class="modal" id="modal-box">
+    <div class="modal-header">
+      <h3 id="modal-title"></h3>
+      <button class="modal-close" id="modal-close">×</button>
+    </div>
+    <div class="modal-body" id="modal-body"></div>
+  </div>
+</div>
+
+<div id="toast" class="toast hidden"></div>
+
+<!-- Firebase SDK (compat) -->
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="firebase-config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

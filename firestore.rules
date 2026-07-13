@@ -1,0 +1,45 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function authed() {
+      return request.auth != null;
+    }
+
+    // メンバープロフィール
+    match /users/{uid} {
+      allow read: if authed();
+      allow create, update: if authed() && request.auth.uid == uid;
+    }
+
+    // 掲示板
+    match /posts/{postId} {
+      allow read, create: if authed();
+      allow update: if authed(); // 固定切替・コメント数更新のため
+      allow delete: if authed() && resource.data.authorUid == request.auth.uid;
+
+      match /comments/{commentId} {
+        allow read, create: if authed();
+        allow delete: if authed() && resource.data.authorUid == request.auth.uid;
+      }
+    }
+
+    // タスク（プライベートは作成者本人のみ閲覧可）
+    match /tasks/{taskId} {
+      allow read: if authed() &&
+        (resource.data.isPrivate == false || resource.data.ownerUid == request.auth.uid);
+      allow create: if authed() && request.resource.data.ownerUid == request.auth.uid;
+      allow update, delete: if authed() &&
+        (resource.data.isPrivate == false || resource.data.ownerUid == request.auth.uid);
+    }
+
+    // カレンダー予定（プライベートは作成者本人のみ閲覧可）
+    match /events/{eventId} {
+      allow read: if authed() &&
+        (resource.data.isPrivate == false || resource.data.ownerUid == request.auth.uid);
+      allow create: if authed() && request.resource.data.ownerUid == request.auth.uid;
+      allow update, delete: if authed() &&
+        (resource.data.isPrivate == false || resource.data.ownerUid == request.auth.uid);
+    }
+  }
+}
