@@ -116,6 +116,16 @@ function periodFieldsHtml(start, end, startLabel, endLabel) {
     </div>`;
 }
 
+// ---------- 種類切替（タスク / 予定） ----------
+function typeSwitchHtml(current) {
+  return `
+    <div class="type-switch">
+      <button type="button" class="type-btn ${current === 'task' ? 'active' : ''}" id="type-task">✅ タスク</button>
+      <button type="button" class="type-btn ${current === 'event' ? 'active' : ''}" id="type-event">📅 予定</button>
+    </div>
+    <div class="form-hint" style="margin:-6px 0 12px">${current === 'task' ? 'タスク＝担当者と進捗を管理するもの / 予定＝日時が決まっている出来事' : '予定＝日時が決まっている出来事 / タスク＝担当者と進捗を管理するもの'}</div>`;
+}
+
 // ---------- 自動翻訳 ----------
 const TRANS_LANGS = [
   ['en', 'English'], ['ja', '日本語'], ['zh-CN', '中文(简体)'], ['ko', '한국어'],
@@ -523,6 +533,7 @@ async function openPostDetail(postId) {
     </form>
     <div class="modal-actions">
       <button class="btn btn-sm" id="post-to-task">✅ タスク化</button>
+      <button class="btn btn-sm" id="post-to-event">📅 予定化</button>
       ${isMine ? `
         <button class="btn btn-sm" id="post-pin-toggle">${p.pinned ? '固定を解除' : '📌 固定する'}</button>
         <div class="right"><button class="btn btn-sm btn-danger" id="post-delete">削除</button></div>
@@ -538,6 +549,16 @@ async function openPostDetail(postId) {
       detail: p.body,
       startDate: p.startDate || '',
       dueDate: p.endDate || p.startDate || '',
+      participantUids: p.participantUids || []
+    });
+  });
+
+  $('post-to-event').addEventListener('click', () => {
+    openEventModal(null, {
+      title: p.title,
+      memo: p.body,
+      date: p.startDate || p.endDate || todayStr(),
+      endDate: p.endDate && p.startDate ? p.endDate : '',
       participantUids: p.participantUids || []
     });
   });
@@ -696,7 +717,8 @@ function openTaskModal(taskId, prefill) {
   const pre = prefill || {};
   const isNew = !t;
   const canEdit = isNew || !t.isPrivate || t.ownerUid === me.uid;
-  openModal(isNew ? '新規タスク' : 'タスクの編集', `
+  openModal(isNew ? '新規作成' : 'タスクの編集', `
+    ${isNew ? typeSwitchHtml('task') : ''}
     <div class="form-group">
       <label>タイトル</label>
       <input type="text" id="task-title" value="${t ? esc(t.title) : esc(pre.title || '')}" placeholder="例）週次レポート作成">
@@ -730,7 +752,7 @@ function openTaskModal(taskId, prefill) {
       </div>
     </div>
     <label class="form-check">
-      <input type="checkbox" id="task-private" ${t && t.isPrivate ? 'checked' : ''}>
+      <input type="checkbox" id="task-private" ${(t ? t.isPrivate : pre.isPrivate) ? 'checked' : ''}>
       🔒 プライベート（自分にのみ表示）
     </label>
     <div class="form-hint">プライベートタスクは担当者が自分・参加者なしの場合のみ設定できます</div>
@@ -745,6 +767,21 @@ function openTaskModal(taskId, prefill) {
   `);
 
   if (!isNew) setupTranslateBar(() => [$('task-title').value, $('task-detail').value]);
+
+  // 種類切替: 入力途中の内容を引き継いで予定モーダルへ
+  if (isNew) {
+    $('type-event').addEventListener('click', () => {
+      const p = collectParticipants();
+      openEventModal(null, {
+        title: $('task-title').value,
+        memo: $('task-detail').value,
+        date: $('item-start').value || $('item-end').value || todayStr(),
+        endDate: $('item-end').value && $('item-start').value ? $('item-end').value : '',
+        participantUids: p.uids,
+        isPrivate: $('task-private').checked
+      });
+    });
+  }
 
   const progressInput = $('task-progress');
   const statusSelect = $('task-status');
@@ -1008,36 +1045,38 @@ function openDayModal(dateStr) {
     });
   });
   $('day-add-task').addEventListener('click', () => openTaskModal(null, { dueDate: dateStr }));
-  $('day-add-event').addEventListener('click', () => openEventModal(null, dateStr));
+  $('day-add-event').addEventListener('click', () => openEventModal(null, { date: dateStr }));
 }
 
-$('new-event-btn').addEventListener('click', () => openEventModal(null, todayStr()));
+$('new-event-btn').addEventListener('click', () => openEventModal(null, { date: todayStr() }));
 
-function openEventModal(eventId, prefillDate) {
+function openEventModal(eventId, prefill) {
   const ev = eventId ? eventsMap.get(eventId) : null;
+  const pre = prefill || {};
   const isNew = !ev;
   const canEdit = isNew || !ev.isPrivate || ev.ownerUid === me.uid;
-  openModal(isNew ? '予定を追加' : '予定の編集', `
+  openModal(isNew ? '新規作成' : '予定の編集', `
+    ${isNew ? typeSwitchHtml('event') : ''}
     <div class="form-group">
       <label>タイトル</label>
-      <input type="text" id="event-title" value="${ev ? esc(ev.title) : ''}" placeholder="例）定例ミーティング">
+      <input type="text" id="event-title" value="${ev ? esc(ev.title) : esc(pre.title || '')}" placeholder="例）定例ミーティング">
     </div>
     <div class="form-group">
       <label>内容・詳細（任意）</label>
-      <textarea id="event-memo" rows="3">${ev ? esc(ev.memo || '') : ''}</textarea>
+      <textarea id="event-memo" rows="3">${ev ? esc(ev.memo || '') : esc(pre.memo || '')}</textarea>
     </div>
     ${periodFieldsHtml(
-      ev ? ev.date : (prefillDate || todayStr()),
-      ev ? (ev.endDate || '') : '',
+      ev ? ev.date : (pre.date || todayStr()),
+      ev ? (ev.endDate || '') : (pre.endDate || ''),
       '開始日', '終了日（任意）'
     )}
     <div class="form-group" style="max-width:180px">
       <label>時刻（任意）</label>
-      <input type="time" id="event-time" value="${ev ? (ev.time || '') : ''}">
+      <input type="time" id="event-time" value="${ev ? (ev.time || '') : (pre.time || '')}">
     </div>
-    ${participantsFieldHtml(ev ? (ev.participantUids || []) : [])}
+    ${participantsFieldHtml(ev ? (ev.participantUids || []) : (pre.participantUids || []))}
     <label class="form-check">
-      <input type="checkbox" id="event-private" ${ev && ev.isPrivate ? 'checked' : ''}>
+      <input type="checkbox" id="event-private" ${(ev ? ev.isPrivate : pre.isPrivate) ? 'checked' : ''}>
       🔒 プライベート（自分にのみ表示）
     </label>
     ${!isNew ? translateBarHtml() : ''}
@@ -1051,6 +1090,21 @@ function openEventModal(eventId, prefillDate) {
   `);
 
   if (!isNew) setupTranslateBar(() => [$('event-title').value, $('event-memo').value]);
+
+  // 種類切替: 入力途中の内容を引き継いでタスクモーダルへ
+  if (isNew) {
+    $('type-task').addEventListener('click', () => {
+      const p = collectParticipants();
+      openTaskModal(null, {
+        title: $('event-title').value,
+        detail: $('event-memo').value,
+        startDate: $('item-start').value || '',
+        dueDate: $('item-end').value || $('item-start').value || '',
+        participantUids: p.uids,
+        isPrivate: $('event-private').checked
+      });
+    });
+  }
 
   $('event-cancel').addEventListener('click', closeModal);
 

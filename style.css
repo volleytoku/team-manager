@@ -324,6 +324,20 @@ body {
 
 input[type="range"] { width: 100%; accent-color: var(--accent); }
 
+/* 種類切替（タスク / 予定） */
+.type-switch {
+  display: flex; gap: 0; margin-bottom: 10px;
+  border: 1px solid var(--border); border-radius: var(--radius);
+  overflow: hidden; width: fit-content;
+}
+.type-btn {
+  border: none; background: var(--bg); color: var(--text-light);
+  padding: 6px 18px; font-size: 13.5px; cursor: pointer; font-family: inherit;
+}
+.type-btn + .type-btn { border-left: 1px solid var(--border); }
+.type-btn.active { background: var(--text); color: #fff; font-weight: 600; }
+.type-btn:not(.active):hover { background: var(--bg-hover); }
+
 /* 参加者選択 */
 .participant-list {
   border: 1px solid var(--border); border-radius: var(--radius);
