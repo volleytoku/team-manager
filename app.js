@@ -18,6 +18,7 @@ let unsubscribers = [];
 let currentView = 'board';
 let taskTab = 'mine';
 let taskStatusFilter = 'all';
+let boardFilter = 'all';
 let calYear, calMonth;    // カレンダー表示中の年月
 
 // ---------- ユーティリティ ----------
@@ -376,7 +377,7 @@ function setupSubscriptions() {
         tasksMap.set(doc.id, { id: doc.id, _src: tag, ...doc.data() });
       }
     });
-    renderIfActive(['tasks', 'members', 'calendar']);
+    renderIfActive(['tasks', 'members', 'calendar', 'board']);
   };
   unsubscribers.push(
     db.collection('tasks').where('isPrivate', '==', false).onSnapshot(mergeTaskSnap('pub'))
@@ -396,7 +397,7 @@ function setupSubscriptions() {
         eventsMap.set(doc.id, { id: doc.id, _src: tag, ...doc.data() });
       }
     });
-    renderIfActive(['calendar']);
+    renderIfActive(['calendar', 'board']);
   };
   unsubscribers.push(
     db.collection('events').where('isPrivate', '==', false).onSnapshot(mergeEventSnap('pub'))
@@ -437,31 +438,94 @@ function render() {
 // ============================================================
 // 掲示板
 // ============================================================
+document.querySelectorAll('#board-filters .chip').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    boardFilter = btn.dataset.kind;
+    document.querySelectorAll('#board-filters .chip').forEach((b) => b.classList.toggle('active', b === btn));
+    renderBoard();
+  });
+});
+
+// 掲示板 = 統合フィード: 投稿 + 公開タスク + 公開予定 を時系列で表示
+function feedItems() {
+  const created = (x) => (x.createdAt && x.createdAt.toMillis ? x.createdAt.toMillis() : Date.now());
+  const items = [];
+  posts.forEach((p) => items.push({ kind: 'post', created: created(p), pinned: !!p.pinned, data: p }));
+  [...tasksMap.values()].filter((t) => !t.isPrivate).forEach((t) =>
+    items.push({ kind: 'task', created: created(t), pinned: false, data: t }));
+  [...eventsMap.values()].filter((ev) => !ev.isPrivate).forEach((ev) =>
+    items.push({ kind: 'event', created: created(ev), pinned: false, data: ev }));
+  return items.sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0) || b.created - a.created);
+}
+
+function feedCardHtml(item) {
+  if (item.kind === 'post') {
+    const p = item.data;
+    return `
+      <div class="post-card" data-kind="post" data-id="${p.id}">
+        <div class="post-card-title">
+          <span class="badge badge-feed-post">💬 投稿</span>
+          ${p.pinned ? '<span class="pin-badge">📌 固定</span>' : ''}
+          ${esc(p.title)}
+        </div>
+        <div class="post-card-preview">${esc(p.body)}</div>
+        <div class="post-card-meta">
+          <span>👤 ${esc(p.authorName)}</span>
+          <span>🕐 ${fmtTimestamp(p.createdAt)}</span>
+          <span>💬 ${p.commentCount || 0}</span>
+          ${p.startDate || p.endDate ? `<span>📅 ${periodLabel(p.startDate, p.endDate)}</span>` : ''}
+          ${p.participantNames && p.participantNames.length ? `<span>👥 ${esc(participantsLabel(p.participantNames))}</span>` : ''}
+        </div>
+      </div>`;
+  }
+  if (item.kind === 'task') {
+    const t = item.data;
+    return `
+      <div class="post-card" data-kind="task" data-id="${t.id}">
+        <div class="post-card-title">
+          <span class="badge badge-feed-task">✅ タスク</span>
+          <span class="badge ${STATUS_BADGE[t.status]}">${STATUS_LABEL[t.status]}</span>
+          <span class="${t.status === 'done' ? 'task-title done' : ''}" style="flex:none">${esc(t.title)}</span>
+        </div>
+        ${t.detail ? `<div class="post-card-preview">${esc(t.detail)}</div>` : ''}
+        <div class="post-card-meta">
+          <span>👤 ${esc(t.assigneeName || t.ownerName || '')}</span>
+          ${t.startDate || t.dueDate ? `<span>📅 ${periodLabel(t.startDate, t.dueDate)}</span>` : ''}
+          ${t.participantNames && t.participantNames.length ? `<span>👥 ${esc(participantsLabel(t.participantNames))}</span>` : ''}
+          <span>進捗 ${t.progress || 0}%</span>
+        </div>
+      </div>`;
+  }
+  const ev = item.data;
+  return `
+    <div class="post-card" data-kind="event" data-id="${ev.id}">
+      <div class="post-card-title">
+        <span class="badge badge-feed-event">📅 予定</span>
+        ${esc(ev.title)}
+      </div>
+      ${ev.memo ? `<div class="post-card-preview">${esc(ev.memo)}</div>` : ''}
+      <div class="post-card-meta">
+        <span>📅 ${periodLabel(ev.date, ev.endDate)}${ev.time ? ' 🕐 ' + esc(ev.time) : ''}</span>
+        ${ev.participantNames && ev.participantNames.length ? `<span>👥 ${esc(participantsLabel(ev.participantNames))}</span>` : `<span>👤 ${esc(ev.ownerName || '')}</span>`}
+      </div>
+    </div>`;
+}
+
 function renderBoard() {
   const list = $('post-list');
-  if (posts.length === 0) {
-    list.innerHTML = '<div class="empty-state">まだ投稿がありません。「＋ 新規投稿」から始めましょう。</div>';
+  let items = feedItems();
+  if (boardFilter !== 'all') items = items.filter((it) => it.kind === boardFilter);
+  if (items.length === 0) {
+    list.innerHTML = '<div class="empty-state">まだ何もありません。「＋ 新規投稿」から始めましょう。タスクや予定を作成しても、ここに自動で表示されます。</div>';
     return;
   }
-  const sorted = [...posts].sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0));
-  list.innerHTML = sorted.map((p) => `
-    <div class="post-card" data-id="${p.id}">
-      <div class="post-card-title">
-        ${p.pinned ? '<span class="pin-badge">📌 固定</span>' : ''}
-        ${esc(p.title)}
-      </div>
-      <div class="post-card-preview">${esc(p.body)}</div>
-      <div class="post-card-meta">
-        <span>👤 ${esc(p.authorName)}</span>
-        <span>🕐 ${fmtTimestamp(p.createdAt)}</span>
-        <span>💬 ${p.commentCount || 0}</span>
-        ${p.startDate || p.endDate ? `<span>📅 ${periodLabel(p.startDate, p.endDate)}</span>` : ''}
-        ${p.participantNames && p.participantNames.length ? `<span>👥 ${esc(participantsLabel(p.participantNames))}</span>` : ''}
-      </div>
-    </div>
-  `).join('');
+  list.innerHTML = items.map(feedCardHtml).join('');
   list.querySelectorAll('.post-card').forEach((el) => {
-    el.addEventListener('click', () => openPostDetail(el.dataset.id));
+    el.addEventListener('click', () => {
+      if (el.dataset.kind === 'post') openPostDetail(el.dataset.id);
+      else if (el.dataset.kind === 'task') openTaskModal(el.dataset.id);
+      else openEventModal(el.dataset.id);
+    });
   });
 }
 

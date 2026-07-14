@@ -211,6 +211,9 @@ body {
 .badge-done { background: var(--green-soft); color: var(--green); }
 .badge-private { background: var(--bg-hover); color: var(--text-light); }
 .badge-pos { background: var(--orange-soft); color: var(--orange); }
+.badge-feed-post { background: var(--purple-soft); color: var(--purple); }
+.badge-feed-task { background: var(--accent-soft); color: var(--accent); }
+.badge-feed-event { background: var(--orange-soft); color: var(--orange); }
 
 .progress-wrap { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
 .progress-bar { flex: 1; height: 6px; background: var(--bg-hover); border-radius: 3px; overflow: hidden; }
