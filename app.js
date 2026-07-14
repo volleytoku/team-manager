@@ -47,6 +47,139 @@ function fmtDateStr(s) {
   return `${m}/${d}(${dow})`;
 }
 
+// 期間表示: "7/20(月)" または "7/20(月) 〜 7/22(水)"
+function periodLabel(start, end) {
+  if (!start && !end) return '';
+  if (start && end && start !== end) return `${fmtDateStr(start)} 〜 ${fmtDateStr(end)}`;
+  return fmtDateStr(start || end);
+}
+
+// 期間内の日付リスト（最大62日で打ち切り）
+function expandRangeDates(start, end) {
+  const s = start || end;
+  const e = end || start;
+  if (!s) return [];
+  const dates = [];
+  let [y, m, d] = s.split('-').map(Number);
+  let cur = new Date(y, m - 1, d);
+  for (let i = 0; i < 62; i++) {
+    const ds = `${cur.getFullYear()}-${String(cur.getMonth() + 1).padStart(2, '0')}-${String(cur.getDate()).padStart(2, '0')}`;
+    dates.push(ds);
+    if (ds >= e) break;
+    cur.setDate(cur.getDate() + 1);
+  }
+  return dates;
+}
+
+// ---------- 参加者選択（共通フォーマット） ----------
+function participantsFieldHtml(selectedUids) {
+  const sel = new Set(selectedUids || []);
+  const rows = Object.entries(usersMap).map(([uid, u]) => `
+    <label class="form-check participant-item">
+      <input type="checkbox" class="participant-cb" value="${uid}" data-name="${esc(u.name)}" ${sel.has(uid) ? 'checked' : ''}>
+      ${esc(u.name)} <span class="participant-pos">${esc(u.position || '')}</span>
+    </label>`).join('');
+  return `
+    <div class="form-group">
+      <label>参加者・関係者（複数選択可）</label>
+      <div class="participant-list">${rows || '<span class="form-hint">メンバーがいません</span>'}</div>
+    </div>`;
+}
+
+function collectParticipants() {
+  const uids = [], names = [];
+  document.querySelectorAll('.participant-cb:checked').forEach((cb) => {
+    uids.push(cb.value);
+    names.push(cb.dataset.name);
+  });
+  return { uids, names };
+}
+
+function participantsLabel(names) {
+  if (!names || names.length === 0) return '';
+  if (names.length <= 3) return names.join('・');
+  return `${names.slice(0, 3).join('・')} 他${names.length - 3}名`;
+}
+
+// 期間入力（共通フォーマット）
+function periodFieldsHtml(start, end, startLabel, endLabel) {
+  return `
+    <div class="form-row">
+      <div class="form-group">
+        <label>${startLabel || '開始日'}</label>
+        <input type="date" id="item-start" value="${start || ''}">
+      </div>
+      <div class="form-group">
+        <label>${endLabel || '終了日'}</label>
+        <input type="date" id="item-end" value="${end || ''}">
+      </div>
+    </div>`;
+}
+
+// ---------- 自動翻訳 ----------
+const TRANS_LANGS = [
+  ['en', 'English'], ['ja', '日本語'], ['zh-CN', '中文(简体)'], ['ko', '한국어'],
+  ['es', 'Español'], ['pt', 'Português'], ['fr', 'Français'], ['de', 'Deutsch'], ['th', 'ไทย']
+];
+
+async function translateText(text, target) {
+  if (!text.trim()) return '';
+  // Google 翻訳（非公式エンドポイント）→ 失敗時は MyMemory にフォールバック
+  try {
+    const r = await fetch(`https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${encodeURIComponent(target)}&dt=t&q=${encodeURIComponent(text)}`);
+    if (r.ok) {
+      const d = await r.json();
+      return d[0].map((x) => x[0]).join('');
+    }
+  } catch (e) { /* fallback へ */ }
+  const r2 = await fetch(`https://api.mymemory.translated.net/get?q=${encodeURIComponent(text.slice(0, 500))}&langpair=autodetect|${encodeURIComponent(target)}`);
+  const d2 = await r2.json();
+  if (d2.responseData && d2.responseData.translatedText) return d2.responseData.translatedText;
+  throw new Error('翻訳に失敗しました');
+}
+
+// 翻訳バー（詳細モーダル共通）。textsFn は翻訳対象テキストを返す関数
+function translateBarHtml() {
+  const lang = localStorage.getItem('transLang') || 'en';
+  const auto = localStorage.getItem('transAuto') === '1';
+  const opts = TRANS_LANGS.map(([code, label]) =>
+    `<option value="${code}" ${code === lang ? 'selected' : ''}>${label}</option>`).join('');
+  return `
+    <div class="translate-bar">
+      <select id="trans-lang">${opts}</select>
+      <button class="btn btn-sm" id="trans-btn">🌐 翻訳</button>
+      <label class="form-check" style="font-size:12px"><input type="checkbox" id="trans-auto" ${auto ? 'checked' : ''}> 自動翻訳</label>
+    </div>
+    <div class="trans-result hidden" id="trans-result"></div>`;
+}
+
+function setupTranslateBar(textsFn) {
+  const btn = $('trans-btn');
+  if (!btn) return;
+  const run = async () => {
+    const lang = $('trans-lang').value;
+    localStorage.setItem('transLang', lang);
+    const out = $('trans-result');
+    out.classList.remove('hidden');
+    out.textContent = '翻訳中...';
+    try {
+      const results = [];
+      for (const t of textsFn().filter((x) => x && x.trim())) {
+        results.push(await translateText(t, lang));
+      }
+      out.textContent = results.join('\n\n') || '(翻訳対象がありません)';
+    } catch (e) {
+      out.textContent = '⚠️ 翻訳に失敗しました。時間をおいて再試行してください。';
+    }
+  };
+  btn.addEventListener('click', run);
+  $('trans-auto').addEventListener('change', (e) => {
+    localStorage.setItem('transAuto', e.target.checked ? '1' : '0');
+  });
+  $('trans-lang').addEventListener('change', () => localStorage.setItem('transLang', $('trans-lang').value));
+  if (localStorage.getItem('transAuto') === '1') run();
+}
+
 function toast(msg) {
   const t = $('toast');
   t.textContent = msg;
@@ -312,6 +445,8 @@ function renderBoard() {
         <span>👤 ${esc(p.authorName)}</span>
         <span>🕐 ${fmtTimestamp(p.createdAt)}</span>
         <span>💬 ${p.commentCount || 0}</span>
+        ${p.startDate || p.endDate ? `<span>📅 ${periodLabel(p.startDate, p.endDate)}</span>` : ''}
+        ${p.participantNames && p.participantNames.length ? `<span>👥 ${esc(participantsLabel(p.participantNames))}</span>` : ''}
       </div>
     </div>
   `).join('');
@@ -327,9 +462,12 @@ $('new-post-btn').addEventListener('click', () => {
       <input type="text" id="post-title" placeholder="例）今週のミーティングについて">
     </div>
     <div class="form-group">
-      <label>本文</label>
-      <textarea id="post-body" rows="7"></textarea>
+      <label>内容・詳細</label>
+      <textarea id="post-body" rows="6"></textarea>
     </div>
+    ${periodFieldsHtml('', '', '開始日（任意）', '終了日（任意）')}
+    <div class="form-hint" style="margin:-8px 0 12px">日付を入れるとカレンダーにも表示されます</div>
+    ${participantsFieldHtml([])}
     <label class="form-check"><input type="checkbox" id="post-pinned"> 📌 上部に固定する</label>
     <div class="modal-actions">
       <div class="right">
@@ -343,8 +481,16 @@ $('new-post-btn').addEventListener('click', () => {
     const title = $('post-title').value.trim();
     const body = $('post-body').value.trim();
     if (!title) { toast('タイトルを入力してください'); return; }
+    const start = $('item-start').value || null;
+    const end = $('item-end').value || null;
+    if (start && end && end < start) { toast('終了日は開始日以降にしてください'); return; }
+    const p = collectParticipants();
     await db.collection('posts').add({
       title, body,
+      startDate: start,
+      endDate: end,
+      participantUids: p.uids,
+      participantNames: p.names,
       pinned: $('post-pinned').checked,
       authorUid: me.uid,
       authorName: myProfile.name,
@@ -366,19 +512,35 @@ async function openPostDetail(postId) {
       <span>🕐 ${fmtTimestamp(p.createdAt)}</span>
       ${p.pinned ? '<span class="pin-badge">📌 固定</span>' : ''}
     </div>
+    ${p.startDate || p.endDate ? `<div class="post-card-meta">📅 ${periodLabel(p.startDate, p.endDate)}</div>` : ''}
+    ${p.participantNames && p.participantNames.length ? `<div class="post-card-meta">👥 ${esc(p.participantNames.join('・'))}</div>` : ''}
     <div class="post-detail-body">${esc(p.body)}</div>
+    ${translateBarHtml()}
     <div class="comment-list" id="comment-list"><div class="empty-state">読み込み中...</div></div>
     <form class="comment-form" id="comment-form">
       <input type="text" id="comment-input" placeholder="コメントを書く..." autocomplete="off">
       <button type="submit" class="btn btn-primary btn-sm">送信</button>
     </form>
     <div class="modal-actions">
+      <button class="btn btn-sm" id="post-to-task">✅ タスク化</button>
       ${isMine ? `
         <button class="btn btn-sm" id="post-pin-toggle">${p.pinned ? '固定を解除' : '📌 固定する'}</button>
         <div class="right"><button class="btn btn-sm btn-danger" id="post-delete">削除</button></div>
       ` : ''}
     </div>
   `);
+
+  setupTranslateBar(() => [p.title, p.body]);
+
+  $('post-to-task').addEventListener('click', () => {
+    openTaskModal(null, {
+      title: p.title,
+      detail: p.body,
+      startDate: p.startDate || '',
+      dueDate: p.endDate || p.startDate || '',
+      participantUids: p.participantUids || []
+    });
+  });
 
   const loadComments = async () => {
     const snap = await db.collection('posts').doc(postId).collection('comments').orderBy('createdAt', 'asc').get();
@@ -470,7 +632,8 @@ function taskCardHtml(t) {
       <div class="task-row">
         <span class="badge ${STATUS_BADGE[t.status]}">${STATUS_LABEL[t.status]}</span>
         <span class="task-title ${t.status === 'done' ? 'done' : ''}">${t.isPrivate ? '🔒 ' : ''}${esc(t.title)}</span>
-        ${t.dueDate ? `<span class="task-due ${overdue ? 'overdue' : ''}">📅 ${fmtDateStr(t.dueDate)}${overdue ? ' 期限超過' : ''}</span>` : ''}
+        ${t.participantNames && t.participantNames.length ? `<span class="task-due">👥 ${esc(participantsLabel(t.participantNames))}</span>` : ''}
+        ${t.startDate || t.dueDate ? `<span class="task-due ${overdue ? 'overdue' : ''}">📅 ${periodLabel(t.startDate, t.dueDate)}${overdue ? ' 期限超過' : ''}</span>` : ''}
       </div>
       <div class="progress-wrap">
         <div class="progress-bar"><div class="progress-fill ${t.status === 'done' ? 'done' : ''}" style="width:${t.progress || 0}%"></div></div>
@@ -487,7 +650,8 @@ function renderTasks() {
 
   let html = '';
   if (taskTab === 'mine') {
-    arr = arr.filter((t) => t.assigneeUid === me.uid || t.ownerUid === me.uid);
+    arr = arr.filter((t) => t.assigneeUid === me.uid || t.ownerUid === me.uid ||
+      (t.participantUids || []).includes(me.uid));
     const priv = sortTasks(arr.filter((t) => t.isPrivate));
     const pub = sortTasks(arr.filter((t) => !t.isPrivate));
     if (pub.length) html += `<div class="task-group-title">🌐 公開タスク</div>` + pub.map(taskCardHtml).join('');
@@ -527,29 +691,30 @@ function memberOptionsHtml(selectedUid) {
   ).join('');
 }
 
-function openTaskModal(taskId, prefillDate) {
+function openTaskModal(taskId, prefill) {
   const t = taskId ? tasksMap.get(taskId) : null;
+  const pre = prefill || {};
   const isNew = !t;
   const canEdit = isNew || !t.isPrivate || t.ownerUid === me.uid;
   openModal(isNew ? '新規タスク' : 'タスクの編集', `
     <div class="form-group">
-      <label>タスク名</label>
-      <input type="text" id="task-title" value="${t ? esc(t.title) : ''}" placeholder="例）週次レポート作成">
+      <label>タイトル</label>
+      <input type="text" id="task-title" value="${t ? esc(t.title) : esc(pre.title || '')}" placeholder="例）週次レポート作成">
     </div>
     <div class="form-group">
-      <label>詳細メモ</label>
-      <textarea id="task-detail" rows="3">${t ? esc(t.detail || '') : ''}</textarea>
+      <label>内容・詳細</label>
+      <textarea id="task-detail" rows="4">${t ? esc(t.detail || '') : esc(pre.detail || '')}</textarea>
     </div>
-    <div class="form-row">
-      <div class="form-group">
-        <label>担当者</label>
-        <select id="task-assignee">${memberOptionsHtml(t ? t.assigneeUid : me.uid)}</select>
-      </div>
-      <div class="form-group">
-        <label>期限</label>
-        <input type="date" id="task-due" value="${t ? (t.dueDate || '') : (prefillDate || '')}">
-      </div>
+    ${periodFieldsHtml(
+      t ? (t.startDate || '') : (pre.startDate || ''),
+      t ? (t.dueDate || '') : (pre.dueDate || ''),
+      '開始日（任意）', '期限'
+    )}
+    <div class="form-group">
+      <label>担当者</label>
+      <select id="task-assignee">${memberOptionsHtml(t ? t.assigneeUid : me.uid)}</select>
     </div>
+    ${participantsFieldHtml(t ? (t.participantUids || []) : (pre.participantUids || []))}
     <div class="form-row">
       <div class="form-group">
         <label>ステータス</label>
@@ -568,7 +733,8 @@ function openTaskModal(taskId, prefillDate) {
       <input type="checkbox" id="task-private" ${t && t.isPrivate ? 'checked' : ''}>
       🔒 プライベート（自分にのみ表示）
     </label>
-    <div class="form-hint">プライベートタスクは担当者が自分の場合のみ設定できます</div>
+    <div class="form-hint">プライベートタスクは担当者が自分・参加者なしの場合のみ設定できます</div>
+    ${!isNew ? translateBarHtml() : ''}
     <div class="modal-actions">
       ${!isNew && canEdit ? '<button class="btn btn-sm btn-danger" id="task-delete">削除</button>' : '<span></span>'}
       <div class="right">
@@ -577,6 +743,8 @@ function openTaskModal(taskId, prefillDate) {
       </div>
     </div>
   `);
+
+  if (!isNew) setupTranslateBar(() => [$('task-title').value, $('task-detail').value]);
 
   const progressInput = $('task-progress');
   const statusSelect = $('task-status');
@@ -597,13 +765,17 @@ function openTaskModal(taskId, prefillDate) {
   if (canEdit) {
     $('task-save').addEventListener('click', async () => {
       const title = $('task-title').value.trim();
-      if (!title) { toast('タスク名を入力してください'); return; }
+      if (!title) { toast('タイトルを入力してください'); return; }
       const assigneeUid = $('task-assignee').value;
+      const p = collectParticipants();
       let isPrivate = $('task-private').checked;
-      if (isPrivate && assigneeUid !== me.uid) {
-        toast('プライベートタスクの担当者は自分のみです');
+      if (isPrivate && (assigneeUid !== me.uid || p.uids.some((u) => u !== me.uid))) {
+        toast('プライベートタスクは担当者が自分・参加者なしの場合のみ設定できます');
         return;
       }
+      const start = $('item-start').value || null;
+      const due = $('item-end').value || null;
+      if (start && due && due < start) { toast('期限は開始日以降にしてください'); return; }
       const assignee = usersMap[assigneeUid] || {};
       const data = {
         title,
@@ -611,7 +783,10 @@ function openTaskModal(taskId, prefillDate) {
         assigneeUid,
         assigneeName: assignee.name || '',
         position: assignee.position || '',
-        dueDate: $('task-due').value || null,
+        startDate: start,
+        dueDate: due,
+        participantUids: p.uids,
+        participantNames: p.names,
         status: statusSelect.value,
         progress: Number(progressInput.value),
         isPrivate,
@@ -712,13 +887,20 @@ function itemsByDate() {
   const map = {};
   const push = (date, item) => { (map[date] = map[date] || []).push(item); };
   [...tasksMap.values()].forEach((t) => {
-    if (t.dueDate) push(t.dueDate, { kind: 'task', sortKey: '99:99', data: t });
+    expandRangeDates(t.startDate, t.dueDate).forEach((d) =>
+      push(d, { kind: 'task', sortKey: '99:99', data: t }));
   });
   [...eventsMap.values()].forEach((ev) => {
-    if (ev.date) push(ev.date, { kind: 'event', sortKey: ev.time || '00:00', data: ev });
+    expandRangeDates(ev.date, ev.endDate).forEach((d) =>
+      push(d, { kind: 'event', sortKey: ev.time || '00:00', data: ev }));
   });
+  posts.forEach((p) => {
+    expandRangeDates(p.startDate, p.endDate).forEach((d) =>
+      push(d, { kind: 'post', sortKey: '00:01', data: p }));
+  });
+  const kindOrder = { event: 0, post: 1, task: 2 };
   Object.values(map).forEach((arr) => arr.sort((a, b) => {
-    if (a.kind !== b.kind) return a.kind === 'event' ? -1 : 1;
+    if (a.kind !== b.kind) return kindOrder[a.kind] - kindOrder[b.kind];
     return a.sortKey < b.sortKey ? -1 : 1;
   }));
   return map;
@@ -729,6 +911,9 @@ function calItemHtml(item) {
     const t = item.data;
     const cls = t.status === 'done' ? 'cal-item-done' : 'cal-item-task';
     return `<div class="cal-item ${cls}">${t.isPrivate ? '🔒' : ''}✅ ${esc(t.title)}</div>`;
+  }
+  if (item.kind === 'post') {
+    return `<div class="cal-item cal-item-post">💬 ${esc(item.data.title)}</div>`;
   }
   const ev = item.data;
   return `<div class="cal-item cal-item-event">${ev.isPrivate ? '🔒' : ''}${ev.time ? esc(ev.time) + ' ' : ''}${esc(ev.title)}</div>`;
@@ -756,7 +941,9 @@ function renderCalendar() {
     const shown = items.slice(0, maxShow).map(calItemHtml).join('');
     const more = items.length > maxShow ? `<div class="cal-more">他 ${items.length - maxShow} 件</div>` : '';
     const marks = items.slice(0, 6).map((it) => {
-      const c = it.kind === 'event' ? 'dot-event' : (it.data.status === 'done' ? 'dot-done' : 'dot-task');
+      const c = it.kind === 'event' ? 'dot-event' :
+        it.kind === 'post' ? 'dot-post' :
+        (it.data.status === 'done' ? 'dot-done' : 'dot-task');
       return `<i class="dot ${c}"></i>`;
     }).join('');
     html += `
@@ -784,12 +971,21 @@ function openDayModal(dateStr) {
           <span class="task-due">👤 ${esc(t.assigneeName || t.ownerName || '')}</span>
         </div>`;
     }
+    if (item.kind === 'post') {
+      const p = item.data;
+      return `
+        <div class="day-item" data-idx="${idx}">
+          <span class="dot dot-post"></span>
+          <span style="flex:1">💬 ${esc(p.title)}</span>
+          <span class="task-due">${p.participantNames && p.participantNames.length ? '👥 ' + esc(participantsLabel(p.participantNames)) : '👤 ' + esc(p.authorName || '')}</span>
+        </div>`;
+    }
     const ev = item.data;
     return `
       <div class="day-item" data-idx="${idx}">
         <span class="dot dot-event"></span>
         <span style="flex:1">${ev.isPrivate ? '🔒 ' : ''}${ev.title ? esc(ev.title) : ''}</span>
-        <span class="task-due">${ev.time ? '🕐 ' + esc(ev.time) : ''} 👤 ${esc(ev.ownerName || '')}</span>
+        <span class="task-due">${ev.time ? '🕐 ' + esc(ev.time) : ''} ${ev.participantNames && ev.participantNames.length ? '👥 ' + esc(participantsLabel(ev.participantNames)) : '👤 ' + esc(ev.ownerName || '')}</span>
       </div>`;
   }).join('');
 
@@ -807,10 +1003,11 @@ function openDayModal(dateStr) {
     el.addEventListener('click', () => {
       const item = items[Number(el.dataset.idx)];
       if (item.kind === 'task') openTaskModal(item.data.id);
+      else if (item.kind === 'post') openPostDetail(item.data.id);
       else openEventModal(item.data.id);
     });
   });
-  $('day-add-task').addEventListener('click', () => openTaskModal(null, dateStr));
+  $('day-add-task').addEventListener('click', () => openTaskModal(null, { dueDate: dateStr }));
   $('day-add-event').addEventListener('click', () => openEventModal(null, dateStr));
 }
 
@@ -825,24 +1022,25 @@ function openEventModal(eventId, prefillDate) {
       <label>タイトル</label>
       <input type="text" id="event-title" value="${ev ? esc(ev.title) : ''}" placeholder="例）定例ミーティング">
     </div>
-    <div class="form-row">
-      <div class="form-group">
-        <label>日付</label>
-        <input type="date" id="event-date" value="${ev ? ev.date : (prefillDate || todayStr())}">
-      </div>
-      <div class="form-group">
-        <label>時刻（任意）</label>
-        <input type="time" id="event-time" value="${ev ? (ev.time || '') : ''}">
-      </div>
-    </div>
     <div class="form-group">
-      <label>メモ（任意）</label>
-      <textarea id="event-memo" rows="2">${ev ? esc(ev.memo || '') : ''}</textarea>
+      <label>内容・詳細（任意）</label>
+      <textarea id="event-memo" rows="3">${ev ? esc(ev.memo || '') : ''}</textarea>
     </div>
+    ${periodFieldsHtml(
+      ev ? ev.date : (prefillDate || todayStr()),
+      ev ? (ev.endDate || '') : '',
+      '開始日', '終了日（任意）'
+    )}
+    <div class="form-group" style="max-width:180px">
+      <label>時刻（任意）</label>
+      <input type="time" id="event-time" value="${ev ? (ev.time || '') : ''}">
+    </div>
+    ${participantsFieldHtml(ev ? (ev.participantUids || []) : [])}
     <label class="form-check">
       <input type="checkbox" id="event-private" ${ev && ev.isPrivate ? 'checked' : ''}>
       🔒 プライベート（自分にのみ表示）
     </label>
+    ${!isNew ? translateBarHtml() : ''}
     <div class="modal-actions">
       ${!isNew && canEdit ? '<button class="btn btn-sm btn-danger" id="event-delete">削除</button>' : '<span></span>'}
       <div class="right">
@@ -852,19 +1050,32 @@ function openEventModal(eventId, prefillDate) {
     </div>
   `);
 
+  if (!isNew) setupTranslateBar(() => [$('event-title').value, $('event-memo').value]);
+
   $('event-cancel').addEventListener('click', closeModal);
 
   if (canEdit) {
     $('event-save').addEventListener('click', async () => {
       const title = $('event-title').value.trim();
-      const date = $('event-date').value;
-      if (!title || !date) { toast('タイトルと日付を入力してください'); return; }
+      const date = $('item-start').value;
+      if (!title || !date) { toast('タイトルと開始日を入力してください'); return; }
+      const endDate = $('item-end').value || null;
+      if (endDate && endDate < date) { toast('終了日は開始日以降にしてください'); return; }
+      const p = collectParticipants();
+      const isPrivate = $('event-private').checked;
+      if (isPrivate && p.uids.some((u) => u !== me.uid)) {
+        toast('プライベートの予定には参加者を設定できません');
+        return;
+      }
       const data = {
         title,
         date,
+        endDate,
         time: $('event-time').value || '',
         memo: $('event-memo').value.trim(),
-        isPrivate: $('event-private').checked,
+        participantUids: p.uids,
+        participantNames: p.names,
+        isPrivate,
         updatedAt: firebase.firestore.FieldValue.serverTimestamp()
       };
       if (isNew) {
