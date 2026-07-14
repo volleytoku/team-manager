@@ -1,13 +1,12 @@
 // ============================================================
 // Firebase 設定
-// Firebase Console → プロジェクトの設定 → マイアプリ → SDK の設定と構成
-// に表示される firebaseConfig をここに貼り付けてください。
 // ============================================================
 const firebaseConfig = {
-  apiKey: "PASTE_YOUR_API_KEY",
-  authDomain: "PASTE_YOUR_PROJECT.firebaseapp.com",
-  projectId: "PASTE_YOUR_PROJECT_ID",
-  storageBucket: "PASTE_YOUR_PROJECT.appspot.com",
-  messagingSenderId: "PASTE_SENDER_ID",
-  appId: "PASTE_APP_ID"
+  apiKey: "AIzaSyBiIKbmpDikYaAUcm2wCLvekpjtZoJWhrg",
+  authDomain: "project-beach-a656b.firebaseapp.com",
+  projectId: "project-beach-a656b",
+  storageBucket: "project-beach-a656b.firebasestorage.app",
+  messagingSenderId: "859391405178",
+  appId: "1:859391405178:web:f1b5bfb74c5d72aa6b9fc3",
+  measurementId: "G-XTC46KW2SV"
 };
